@@ -12,7 +12,7 @@ repositories {
 
 dependencies {
     testImplementation(kotlin("test"))
-    implementation("ai.koog:koog-agents:0.1.0")
+    implementation("ai.koog:koog-agents:0.2.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
 }
 

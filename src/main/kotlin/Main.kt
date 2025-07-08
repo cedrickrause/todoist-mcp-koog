@@ -10,70 +10,41 @@ import ai.koog.agents.core.dsl.extension.nodeLLMRequest
 import ai.koog.agents.core.dsl.extension.nodeLLMSendToolResult
 import ai.koog.agents.core.dsl.extension.onAssistantMessage
 import ai.koog.agents.core.dsl.extension.onToolCall
-import ai.koog.agents.core.tools.Tool
-import ai.koog.agents.core.tools.ToolDescriptor
-import ai.koog.agents.core.tools.ToolParameterDescriptor
-import ai.koog.agents.core.tools.ToolParameterType
-import ai.koog.agents.core.tools.ToolRegistry
-import ai.koog.agents.core.tools.ToolResult
-import ai.koog.agents.local.features.eventHandler.feature.EventHandler
+import ai.koog.agents.features.eventHandler.feature.EventHandler
+import ai.koog.agents.mcp.McpToolRegistryProvider
 import ai.koog.prompt.dsl.Prompt
 import ai.koog.prompt.executor.clients.anthropic.AnthropicModels
 import ai.koog.prompt.executor.llms.all.simpleAnthropicExecutor
-import kotlinx.serialization.Serializable
+import kotlinx.coroutines.runBlocking
 
 //TIP To <b>Run</b> code, press <shortcut actionId="Run"/> or
 // click the <icon src="AllIcons.Actions.Execute"/> icon in the gutter.
 
-/// Use the Anthropic executor with an API key from an environment variable
-val promptExecutor = simpleAnthropicExecutor(System.getenv("ANTHROPIC_API_KEY"))
+val anthropicApiKey: String = System.getenv("ANTHROPIC_API_KEY")
+val promptExecutor = simpleAnthropicExecutor(anthropicApiKey)
 
-// Create a simple strategy
-val agentStrategy = strategy("Simple calculator") {
-    // Define nodes for the strategy
+val agentStrategy = strategy("Simple todoist MCP") {
     val nodeSendInput by nodeLLMRequest()
     val nodeExecuteTool by nodeExecuteTool()
     val nodeSendToolResult by nodeLLMSendToolResult()
 
-    // Define edges between nodes
-    // Start -> Send input
     edge(nodeStart forwardTo nodeSendInput)
 
-    // Send input -> Finish
-    edge(
-        (nodeSendInput forwardTo nodeFinish)
-                transformed { it }
-                onAssistantMessage { true }
-    )
+    edge( (nodeSendInput forwardTo nodeFinish) transformed { it } onAssistantMessage { true } )
 
-    // Send input -> Execute tool
-    edge(
-        (nodeSendInput forwardTo nodeExecuteTool)
-                onToolCall { true }
-    )
+    edge( (nodeSendInput forwardTo nodeExecuteTool) onToolCall { true } )
 
-    // Execute tool -> Send the tool result
     edge(nodeExecuteTool forwardTo nodeSendToolResult)
 
-    // Send the tool result -> finish
-    edge(
-        (nodeSendToolResult forwardTo nodeFinish)
-                transformed { it }
-                onAssistantMessage { true }
-    )
+    edge( (nodeSendToolResult forwardTo nodeSendInput) transformed { it } onAssistantMessage { true } )
 }
 
-// Configure the agent
 val agentConfig = AIAgentConfig(
-    prompt = Prompt.build("simple-calculator") {
+    prompt = Prompt.build("todoist-mcp-agent") {
         system(
             """
-                You are a simple calculator assistant.
-                You can add two numbers together using the calculator tool.
-                When the user provides input, extract the numbers they want to add.
-                The input might be in various formats like "add 5 and 7", "5 + 7", or just "5 7".
-                Extract the two numbers and use the calculator tool to add them.
-                Always respond with a clear, friendly message showing the calculation and result.
+                You are an assistant for using the todoist app. You can add, update, delete, complete todos in the app 
+                and you can give a list of open todos. Also there are dates, topics etc. for which you can filter. 
                 """.trimIndent()
         )
     },
@@ -81,77 +52,51 @@ val agentConfig = AIAgentConfig(
     maxAgentIterations = 10
 )
 
-// Implement a simple calculator tool that can add two numbers
-object CalculatorTool : Tool<CalculatorTool.Args, ToolResult>() {
+fun main() {
+    val process = ProcessBuilder(
+        "npx", "@abhiz123/todoist-mcp-server"
+    ).start()
 
-    @Serializable
-    data class Args(
-        val num1: Int,
-        val num2: Int
-    ) : Tool.Args
+    Thread.sleep(2000)
 
-    @Serializable
-    data class Result(
-        val sum: Int
-    ) : ToolResult {
-        override fun toStringDefault(): String {
-            return "The sum is: $sum"
-        }
-    }
+    try {
+        runBlocking {
+            try {
 
-    override val argsSerializer = Args.serializer()
+                println("Connecting to Todoist MCP server...")
+                val toolRegistry = McpToolRegistryProvider.fromTransport(
+                    transport = McpToolRegistryProvider.defaultStdioTransport(process)
+                )
+                println("Successfully connected to Todoist MCP server")
 
-    override val descriptor = ToolDescriptor(
-        name = "calculator",
-        description = "Add two numbers together",
-        requiredParameters = listOf(
-            ToolParameterDescriptor(
-                name = "num1",
-                description = "First number to add",
-                type = ToolParameterType.Integer
-            ),
-            ToolParameterDescriptor(
-                name = "num2",
-                description = "Second number to add",
-                type = ToolParameterType.Integer
-            )
-        )
-    )
+                val agent = AIAgent(
+                    promptExecutor = promptExecutor,
+                    strategy = agentStrategy,
+                    agentConfig = agentConfig,
+                    toolRegistry = toolRegistry,
+                    installFeatures = {
+                        install(EventHandler) {
+                            onBeforeAgentStarted = { strategy: AIAgentStrategy, agent: AIAgent ->
+                                println("Starting strategy: ${strategy.name}")
+                            }
+                            onAgentFinished = { strategyName: String, result: String? ->
+                                println("Result: $result")
+                            }
+                        }
+                    }
+                )
 
-    override suspend fun execute(args: Args): Result {
-        // Perform a simple addition operation
-        val sum = args.num1 + args.num2
-        return Result(sum)
-    }
-}
+                println("What would you like me to do?")
+                val userInput = readlnOrNull() ?: ""
+                agent.run(userInput)
 
-// Create the tool to the tool registry
-val toolRegistry = ToolRegistry {
-    tool(CalculatorTool)
-}
-
-// Create the agent
-val agent = AIAgent(
-    promptExecutor = promptExecutor,
-    strategy = agentStrategy,
-    agentConfig = agentConfig,
-    toolRegistry = toolRegistry,
-    installFeatures = {
-        // install the EventHandler feature
-        install(EventHandler) {
-            onBeforeAgentStarted = { strategy: AIAgentStrategy, agent: AIAgent ->
-                println("Starting strategy: ${strategy.name}")
-            }
-            onAgentFinished = { strategyName: String, result: String? ->
-                println("Result: $result")
+            } catch (e: Exception) {
+                println("Error connecting to Todoist MCP server: ${e.message}")
+                e.printStackTrace()
             }
         }
+    } finally {
+        println("Disconnecting from Todoist MCP server.")
+        process.destroy()
     }
-)
-
-suspend fun main() {
-    println("Enter two numbers to add (e.g., 'add 5 and 7' or '5 + 7'):")
-
-    val userInput = readlnOrNull() ?: ""
-    agent.run(userInput)
 }
