@@ -17,8 +17,6 @@ import ai.koog.prompt.executor.clients.anthropic.AnthropicModels
 import ai.koog.prompt.executor.llms.all.simpleAnthropicExecutor
 import kotlinx.coroutines.runBlocking
 
-//TIP To <b>Run</b> code, press <shortcut actionId="Run"/> or
-// click the <icon src="AllIcons.Actions.Execute"/> icon in the gutter.
 
 val anthropicApiKey: String = System.getenv("ANTHROPIC_API_KEY")
 val promptExecutor = simpleAnthropicExecutor(anthropicApiKey)
