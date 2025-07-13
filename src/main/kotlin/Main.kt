@@ -10,6 +10,7 @@ import ai.koog.agents.core.dsl.extension.nodeLLMRequest
 import ai.koog.agents.core.dsl.extension.nodeLLMSendToolResult
 import ai.koog.agents.core.dsl.extension.onAssistantMessage
 import ai.koog.agents.core.dsl.extension.onToolCall
+import ai.koog.agents.core.tools.ToolRegistry
 import ai.koog.agents.features.eventHandler.feature.EventHandler
 import ai.koog.agents.mcp.McpToolRegistryProvider
 import ai.koog.prompt.dsl.Prompt
@@ -51,22 +52,12 @@ val agentConfig = AIAgentConfig(
 )
 
 fun main() {
-    val process = ProcessBuilder(
-        "npx", "@abhiz123/todoist-mcp-server"
-    ).start()
-
-    Thread.sleep(2000)
+    val process = startTodoistMcpServer()
 
     try {
         runBlocking {
             try {
-
-                println("Connecting to Todoist MCP server...")
-                val toolRegistry = McpToolRegistryProvider.fromTransport(
-                    transport = McpToolRegistryProvider.defaultStdioTransport(process)
-                )
-                println("Successfully connected to Todoist MCP server")
-
+                val toolRegistry = createToolRegistryWithTodoistMcp(process)
                 val agent = AIAgent(
                     promptExecutor = promptExecutor,
                     strategy = agentStrategy,
@@ -84,9 +75,7 @@ fun main() {
                     }
                 )
 
-                println("What would you like me to do?")
-                val userInput = readlnOrNull() ?: ""
-                agent.run(userInput)
+                runAgent(agent)
 
             } catch (e: Exception) {
                 println("Error connecting to Todoist MCP server: ${e.message}")
@@ -97,4 +86,25 @@ fun main() {
         println("Disconnecting from Todoist MCP server.")
         process.destroy()
     }
+}
+
+private suspend fun runAgent(agent: AIAgent) {
+    println("What would you like me to do?")
+    val userInput = readlnOrNull() ?: ""
+    agent.run(userInput)
+}
+
+private suspend fun createToolRegistryWithTodoistMcp(process: Process): ToolRegistry {
+    println("Connecting to Todoist MCP server...")
+    val toolRegistry = McpToolRegistryProvider.fromTransport(
+        transport = McpToolRegistryProvider.defaultStdioTransport(process)
+    )
+    println("Successfully connected to Todoist MCP server")
+    return toolRegistry
+}
+
+private fun startTodoistMcpServer(): Process {
+    val process = ProcessBuilder("npx", "@abhiz123/todoist-mcp-server").start()
+    Thread.sleep(2000)
+    return process
 }
